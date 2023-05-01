@@ -1,0 +1,35 @@
+[tool.poetry]
+name = "chessgram"
+version = "0.1.0"
+description = "Chess bot for Telegram"
+authors = ["Jens Reidel <adrian@travitia.xyz>"]
+license = "AGPL"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+asyncpg = "^0.27.0"
+aiogram = { git = "https://github.com/aiogram/aiogram.git" }
+chess = "^1.9.4"
+bidict = "^0.22.1"
+python-dotenv = "^1.0.0"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.3.0"
+isort = "^5.12.0"
+mypy = "^1.2.0"
+asyncpg-stubs = "^0.27.0"
+
+[tool.poetry.scripts]
+bot = "chessgram.__main__:main"
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.isort]
+profile = "black"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
