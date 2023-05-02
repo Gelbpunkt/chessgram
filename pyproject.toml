@@ -10,9 +10,11 @@ readme = "README.md"
 python = "^3.11"
 asyncpg = { version = "^0.27.0", allow-prereleases = true }
 aiogram = { git = "https://github.com/aiogram/aiogram.git" }
-chess = { version = "^1.9.4", allow-prereleases = true }
-bidict = { version = "^0.22.1", allow-prereleases = true }
-python-dotenv = { version = "^1.0.0", allow-prereleases = true }
+chess = "^1.9.4"
+bidict = "^0.22.1"
+python-dotenv = "^1.0.0"
+orjson = "^3.8.11"
+uvloop = "^0.17.0"
 
 [tool.poetry.group.dev.dependencies]
 black = "^23.3.0"

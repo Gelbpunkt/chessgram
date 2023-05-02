@@ -13,7 +13,8 @@ RUN set -ex && \
     poetry update --lock --only main && \
     poetry install --only main && \
     poetry cache list | xargs -L 1 poetry cache clear --all && \
-    apk del .deps
+    apk del .deps && \
+    apk add --no-cache libgcc
 
 COPY . .
 

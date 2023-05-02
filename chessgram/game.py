@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING, Literal
 
 import aiogram
 import aiohttp
-import asyncpg
 import chess
 import chess.engine
 import chess.pgn
@@ -39,6 +38,19 @@ if TYPE_CHECKING:
 
 Move = Literal["draw"] | Literal["resign"] | Literal["timeout"] | chess.Move
 PotentiallyIllegalMove = Move | Literal[False]
+
+DIFFICULTY_LEVEL_TO_ELO = {
+    1: 1320,
+    2: 1400,
+    3: 1500,
+    4: 1650,
+    5: 1800,
+    6: 1900,
+    7: 2000,
+    8: 2250,
+    9: 2500,
+    10: 2750,
+}
 
 
 # https://github.com/niklasf/python-chess/issues/492
@@ -135,8 +147,15 @@ class ChessGame:
         self.rated = rated
         self.msg: aiogram.types.Message | None = None
 
-        if self.enemy is None:
-            self.limit = chess.engine.Limit(depth=difficulty)
+        self.limit = chess.engine.Limit(time=0.05)
+
+        if self.enemy is None and difficulty is not None:
+            self.options = {
+                "UCI_LimitStrength": "true",
+                "UCI_Elo": f"{DIFFICULTY_LEVEL_TO_ELO[difficulty]}",
+            }
+        else:
+            self.options = {}
 
     def pretty_moves(self) -> list[str]:
         history = chess.Board().variation_san(self.board.move_stack)
@@ -154,12 +173,14 @@ class ChessGame:
                 move = "e1c1"
             else:
                 move = "e8c8"
-        elif move == "resign":
+        elif move.lower() == "resign":
             return "resign"
-        elif move == "draw":
+        elif move.lower() == "draw":
             return "draw"
         try:
             parsed_move = self.board.parse_san(move)
+        except chess.IllegalMoveError:
+            return False
         except ValueError:
             parsed_move = chess.Move.from_uci(move)
         if parsed_move not in self.board.legal_moves:
@@ -199,7 +220,7 @@ Moves are case-sensitive! Pieces uppercase: <code>N</code>, <code>Q</code> or <c
 lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0-0</code> or <code>0-0-0</code>.""",
         )
 
-        def check(msg: aiogram.types.Message) -> bool:
+        async def check(msg: aiogram.types.Message) -> bool:
             if not (
                 msg.text is not None
                 and player is not None  # mypy can't infer this
@@ -209,7 +230,13 @@ lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0
             ):
                 return False
             try:
-                return bool(self.parse_move(msg.text, self.colors[player]))
+                move = self.parse_move(msg.text, self.colors[player])
+
+                if move is not False:
+                    return True
+                else:
+                    await msg.reply("That is an illegal move!")
+                    return False
             except ValueError:
                 return False
 
@@ -232,23 +259,19 @@ lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0
 
         return move
 
+    async def analyze(self) -> chess.engine.InfoDict:
+        analysis = await self.engine.analyse(self.board, limit=self.limit)
+        return analysis
+
     async def get_ai_move(self) -> Move:
-        text = f"<b>Move {self.move_no}</b>\nLet me think... This might take up to 2 minutes"
-
-        if self.msg:
-            await self.msg.delete()
-
-        self.msg = await self.message.answer(text)
-
         try:
             async with asyncio.timeout(120):
-                played = await self.engine.play(self.board, self.limit)
+                played = await self.engine.play(
+                    self.board, self.limit, options=self.options
+                )
         except asyncio.TimeoutError:
             move = random.choice(list(self.board.legal_moves))
-            await self.msg.delete()
             return move
-
-        await self.msg.delete()
 
         if played.draw_offered:
             return "draw"
@@ -267,7 +290,12 @@ lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0
 
         try:
             async with asyncio.timeout(120):
-                move = await self.engine.play(self.board, self.limit, draw_offered=True)
+                move = await self.engine.play(
+                    self.board,
+                    limit=self.limit,
+                    options=self.options,
+                    draw_offered=True,
+                )
         except asyncio.TimeoutError:
             await msg.delete()
             return False
@@ -408,6 +436,8 @@ lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0
         white, black = reversed(sorted(self.colors, key=lambda x: self.colors[x]))
         current = white
 
+        last_analysis: chess.engine.InfoDict | None = None
+
         while not self.board.is_game_over() and self.status == GameStatus.Playing:
             self.move_no += 1
             move = await self.get_move_from(current)
@@ -433,6 +463,56 @@ lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0
                     continue
             else:
                 self.make_move(move)
+
+                # Analyze the game position
+                analysis = await self.analyze()
+
+                # Only do this if playing against AI and the player made a mistake
+                if (
+                    last_analysis is not None
+                    and self.enemy is None
+                    and current is not None
+                ):
+                    old_score = last_analysis["score"]
+                    new_score = analysis["score"]
+                    old_player_score = old_score.pov(self.colors[current])
+                    new_player_score = new_score.pov(self.colors[current])
+
+                    new_mate = new_player_score.mate()
+                    old_mate = old_player_score.mate()
+
+                    # Player POV: They are being mated in X and weren't previously
+                    if new_mate is not None and old_mate is None and new_mate < 0:
+                        await self.message.answer(
+                            "Oh no! You blundered hard! It's past the point of return now!"
+                        )
+                    # Player POV: They are mating in X and weren't previously
+                    elif new_mate is not None and old_mate is None and new_mate > 0:
+                        await self.message.answer(
+                            "Outstanding move! Victory isn't far now!"
+                        )
+                    elif new_mate is None and old_mate is None:
+                        score_diff = new_player_score.score(
+                            mate_score=100000
+                        ) - old_player_score.score(mate_score=100000)
+
+                        # More than a knight or bishop lost
+                        if score_diff <= -300:
+                            await self.message.answer(
+                                "Jeez! That's a terrible blunder! You suck!"
+                            )
+                        # ~1 pawn lost
+                        elif score_diff <= -100:
+                            await self.message.answer("Oh no! That's a small blunder!")
+                        # ~1 pawn gained
+                        elif score_diff >= 100:
+                            await self.message.answer("Good one! Step by step!")
+                        # More than a knight or bishop gained
+                        elif score_diff >= 300:
+                            await self.message.answer("Hell yeah! Outstanding move!")
+
+                last_analysis = analysis
+
                 if self.history and len(self.history[-1]) == 1:
                     self.history[-1].append(move)
                 else:
@@ -454,8 +534,8 @@ lowercase: <code>a</code>, <code>b</code> or <code>h</code>. Castling is <code>0
         game.headers["Site"] = self.message.chat.full_name
         game.headers["Date"] = datetime.date.today().isoformat()
         game.headers["Round"] = "1"
-        game.headers["White"] = str(white) if white is not None else "AI"
-        game.headers["Black"] = str(black) if black is not None else "AI"
+        game.headers["White"] = white.full_name if white is not None else "AI"
+        game.headers["Black"] = black.full_name if black is not None else "AI"
         game.headers["Result"] = result
         pgn = f"{game}\n\n"
 

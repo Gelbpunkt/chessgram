@@ -1,11 +1,12 @@
 import asyncio
 import os
 from contextlib import asynccontextmanager
-from typing import AsyncIterator, Callable
+from typing import AsyncIterator, Awaitable, Callable
 
 import aiohttp
 import asyncpg
 import chess.engine
+import orjson
 from aiogram import Bot, Dispatcher
 from aiogram.filters import Command, CommandObject
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message
@@ -18,11 +19,11 @@ from .utils import Pool, random_id, router, wait_for_any_button
 class MessageListener:
     def __init__(self) -> None:
         self.callbacks: dict[
-            str, tuple[Callable[[Message], bool], asyncio.Future[Message]]
+            str, tuple[Callable[[Message], Awaitable[bool]], asyncio.Future[Message]]
         ] = {}
 
     async def wait_for(
-        self, check: Callable[[Message], bool], timeout: int | None = 30
+        self, check: Callable[[Message], Awaitable[bool]], timeout: int | None = 30
     ) -> Message:
         id = random_id()
         fut: asyncio.Future[Message] = asyncio.Future()
@@ -36,9 +37,9 @@ class MessageListener:
             del self.callbacks[id]
             raise e
 
-    def process(self, msg: Message) -> None:
+    async def process(self, msg: Message) -> None:
         for id, (check, fut) in list(self.callbacks.items()):
-            if check(msg):
+            if await check(msg):
                 fut.set_result(msg)
                 del self.callbacks[id]
 
@@ -291,7 +292,7 @@ async def message_handler(
 ) -> None:
     if message.from_user is not None:
         await user_cache.update(message.from_user)
-    messages.process(message)
+    await messages.process(message)
 
 
 async def run() -> None:
@@ -314,7 +315,9 @@ async def run() -> None:
     engine = adapter.protocol
     await engine.initialize()
 
-    session = aiohttp.ClientSession(headers={"Authorization": OKAPI_TOKEN})
+    session = aiohttp.ClientSession(
+        headers={"Authorization": OKAPI_TOKEN}, json_serialize=orjson.dumps  # type: ignore
+    )
 
     dp = Dispatcher()
     dp["pool"] = pool
