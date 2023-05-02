@@ -242,29 +242,27 @@ async def play(
 
             await rated_msg.delete()
 
-            confirm_text = f"{enemy.mention_html()}, you have been challenged by {message.from_user.mention_html()}. They will be {side}. Do you accept?"
-            if rated:
-                confirm_text = f"{confirm_text} <b>The match will be ELO rated.</b>"
+        confirm_text = f"{enemy.mention_html()}, you have been challenged by {message.from_user.mention_html()}. They will be {side}. Do you accept?"
+        if rated:
+            confirm_text = f"{confirm_text} <b>The match will be ELO rated.</b>"
 
-            buttons = [
-                InlineKeyboardButton(text="Yes", callback_data=random_id()),
-                InlineKeyboardButton(text="No", callback_data=random_id()),
-            ]
+        buttons = [
+            InlineKeyboardButton(text="Yes", callback_data=random_id()),
+            InlineKeyboardButton(text="No", callback_data=random_id()),
+        ]
 
-            confirm_msg = await message.reply(
-                confirm_text,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
-            )
+        confirm_msg = await message.reply(
+            confirm_text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[buttons]),
+        )
 
-            accepted = (await wait_for_any_button(buttons, user=enemy)) == "Yes"
+        accepted = (await wait_for_any_button(buttons, user=enemy)) == "Yes"
 
-            await confirm_msg.delete()
+        await confirm_msg.delete()
 
-            if not accepted:
-                await message.reply(
-                    f"{enemy.mention_html()} rejected the chess challenge."
-                )
-                return
+        if not accepted:
+            await message.reply(f"{enemy.mention_html()} rejected the chess challenge.")
+            return
 
     try:
         async with matches.lock(message.chat.id):
